@@ -5,13 +5,12 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
-
 from app.core.config import settings
-from app.models.base import Base  # noqa: F401
-import app.models  # noqa: F401 — import all models
+from app.core.database import Base
+import app.models  # noqa: F401 — ensure all models are imported
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("+asyncpg", "+psycopg2"))
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -22,8 +21,10 @@ target_metadata = Base.metadata
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url, target_metadata=target_metadata,
-        literal_binds=True, dialect_opts={"paramstyle": "named"},
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
     )
     with context.begin_transaction():
         context.run_migrations()
