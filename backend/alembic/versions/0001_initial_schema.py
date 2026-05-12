@@ -16,6 +16,11 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # FIX 1: uuid-ossp Extension sicherstellen
+    op.execute("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"")
+    op.execute("CREATE EXTENSION IF NOT EXISTS postgis")
+    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+
     # geo_entities
     op.create_table(
         "geo_entities",
@@ -33,8 +38,9 @@ def upgrade() -> None:
         sa.Column("population", sa.BigInteger()),
         sa.Column("timezone", sa.String(50)),
         sa.Column("metadata", postgresql.JSONB, server_default=sa.text("'{}'"), nullable=False),
-        sa.Column("created_at", postgresql.TIMESTAMPTZ, server_default=sa.text("NOW()"), nullable=False),
-        sa.Column("updated_at", postgresql.TIMESTAMPTZ, server_default=sa.text("NOW()"), nullable=False),
+        # FIX 2: TIMESTAMPTZ korrekt als sa.TIMESTAMP(timezone=True)
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("NOW()"), nullable=False),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("NOW()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.CheckConstraint("world_band_row BETWEEN 0 AND 2", name="ck_geo_world_band_row"),
         sa.CheckConstraint("world_band_col BETWEEN 0 AND 2", name="ck_geo_world_band_col"),
@@ -55,8 +61,8 @@ def upgrade() -> None:
         sa.Column("subcategory", sa.String(100)),
         sa.Column("visual_area", sa.Numeric(15, 2), nullable=False),
         sa.Column("metadata", postgresql.JSONB, server_default=sa.text("'{}'"), nullable=False),
-        sa.Column("created_at", postgresql.TIMESTAMPTZ, server_default=sa.text("NOW()"), nullable=False),
-        sa.Column("updated_at", postgresql.TIMESTAMPTZ, server_default=sa.text("NOW()"), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("NOW()"), nullable=False),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("NOW()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("idx_container_geo_entity", "square_containers", ["geo_entity_id"])
@@ -68,20 +74,27 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=True), server_default=sa.text("uuid_generate_v4()"), nullable=False),
         sa.Column("container_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("square_containers.id", ondelete="CASCADE"), nullable=False),
         sa.Column("content", sa.Text, nullable=False),
-        sa.Column("embedding", sa.Column("embedding", sa.Text)),
+        # FIX 3: embedding war sa.Column("embedding", sa.Column(...)) — doppelt verschachtelt → korrigiert
+        sa.Column("embedding", sa.Text),
         sa.Column("version", sa.Integer, server_default="1", nullable=False),
         sa.Column("status", sa.String(20), server_default="active", nullable=False),
         sa.Column("stability_counter", sa.Integer, server_default="0", nullable=False),
         sa.Column("fact_check", sa.String(20), server_default="unverified", nullable=False),
         sa.Column("confidence_score", sa.Numeric(4, 3)),
         sa.Column("metadata", postgresql.JSONB, server_default=sa.text("'{}'"), nullable=False),
-        sa.Column("last_changed_at", postgresql.TIMESTAMPTZ, server_default=sa.text("NOW()"), nullable=False),
-        sa.Column("created_at", postgresql.TIMESTAMPTZ, server_default=sa.text("NOW()"), nullable=False),
-        sa.Column("updated_at", postgresql.TIMESTAMPTZ, server_default=sa.text("NOW()"), nullable=False),
+        sa.Column("last_changed_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("NOW()"), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("NOW()"), nullable=False),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("NOW()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("idx_knowledge_container", "knowledge_entries", ["container_id"])
     op.create_index("idx_knowledge_status_updated", "knowledge_entries", ["status", "updated_at"])
+    # FIX 4: FTS-Index via raw SQL (GIN tsvector)
+    op.execute(
+        "ALTER TABLE knowledge_entries ADD COLUMN content_tsv tsvector "
+        "GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED"
+    )
+    op.execute("CREATE INDEX idx_knowledge_fts ON knowledge_entries USING GIN (content_tsv)")
 
     # sources
     op.create_table(
@@ -93,7 +106,7 @@ def upgrade() -> None:
         sa.Column("doi", sa.String(100)),
         sa.Column("reliability_score", sa.Numeric(3, 2)),
         sa.Column("metadata", postgresql.JSONB, server_default=sa.text("'{}'"), nullable=False),
-        sa.Column("created_at", postgresql.TIMESTAMPTZ, server_default=sa.text("NOW()"), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("NOW()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
 
@@ -116,7 +129,7 @@ def upgrade() -> None:
         sa.Column("old_value", sa.Text),
         sa.Column("new_value", sa.Text),
         sa.Column("change_delta", postgresql.JSONB),
-        sa.Column("changed_at", postgresql.TIMESTAMPTZ, server_default=sa.text("NOW()"), nullable=False),
+        sa.Column("changed_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("NOW()"), nullable=False),
         sa.Column("ip_address", postgresql.INET),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -125,6 +138,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # FIX 5: Korrekte Reihenfolge (FK-Abhängigkeiten beachten)
     op.drop_table("change_logs")
     op.drop_table("knowledge_sources")
     op.drop_table("sources")
